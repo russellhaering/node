@@ -148,6 +148,12 @@ static Handle<Value> Socket(const Arguments& args) {
       domain = PF_UNIX;
       type = SOCK_STREAM;
     } else if (0 == strcasecmp(*t, "UDP")) {
+      domain = PF_INET;
+      type = SOCK_DGRAM;
+    } else if (0 == strcasecmp(*t, "UDP4")) {
+      domain = PF_INET;
+      type = SOCK_DGRAM;
+    } else if (0 == strcasecmp(*t, "UDP6")) {
       domain = PF_INET6;
       type = SOCK_DGRAM;
     } else {
