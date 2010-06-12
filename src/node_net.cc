@@ -148,6 +148,9 @@ static Handle<Value> Socket(const Arguments& args) {
     } else if (0 == strcasecmp(*t, "UNIX")) {
       domain = PF_UNIX;
       type = SOCK_STREAM;
+    } else if (0 == strcasecmp(*t, "UNIX_DGRAM")) {
+      domain = PF_UNIX;
+      type = SOCK_DGRAM;
     } else if (0 == strcasecmp(*t, "UDP")) {
       domain = PF_INET;
       type = SOCK_DGRAM;
@@ -855,13 +858,15 @@ static Handle<Value> SendMsg(const Arguments& args) {
 // The 'flags' parameter is a number representing a bitmask of MSG_* values.
 // This is passed directly to sendmsg().
 //
+// The destination port can either be an int port, or a path.
+//
 // Returns null on EAGAIN or EINTR, raises an exception on all other errors
 static Handle<Value> SendTo(const Arguments& args) {
   HandleScope scope;
 
-  if (args.Length() < 6) {
+  if (args.Length() < 5) {
     return ThrowException(Exception::TypeError(
-          String::New("Takes 6 parameters")));
+          String::New("Takes 5 or 6 parameters")));
   }
 
   // The first argument should be a file descriptor
