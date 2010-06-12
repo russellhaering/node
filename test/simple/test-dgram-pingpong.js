@@ -74,10 +74,10 @@ function pingPongTest (port, host) {
 pingPongTest(20989, "localhost");
 pingPongTest(20990, "localhost");
 pingPongTest(20988);
-//pingPongTest(20997, "::1");
+pingPongTest(20997, "::1");
 //pingPongTest("/tmp/pingpong.sock");
 
 process.addListener("exit", function () {
-  assert.equal(3, tests_run);
+  assert.equal(4, tests_run);
   puts('done');
 });
