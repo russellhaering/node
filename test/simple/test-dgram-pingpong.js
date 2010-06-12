@@ -5,7 +5,7 @@ var dgram = require("dgram");
 var tests_run = 0;
 
 function pingPongTest (port, host) {
-  var N = 10000;
+  var N = 3000;
   var count = 0;
   var sent_final_ping = false;
 
