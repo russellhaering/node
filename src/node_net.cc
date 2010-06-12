@@ -905,7 +905,7 @@ static Handle<Value> SendTo(const Arguments& args) {
 
   int flags = 0;
   if (args.Length() >= 5 && !args[4]->IsUndefined()) {
-    if (!args[5]->IsUint32()) {
+    if (!args[4]->IsUint32()) {
       return ThrowException(Exception::TypeError(
         String::New("Expected unsigned integer for a flags argument")));
     }
