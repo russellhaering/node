@@ -4,7 +4,7 @@ var fs = require('fs');
 var Buffer = require('buffer').Buffer;
 
 var path = "/tmp/wt.dat";
-var tsize = 1000 * 1048576;
+var tsize = 100 * 1048576;
 var bsizes = [1024, 4096, 8192, 16384, 32768, 65536];
 
 function bufit(size) {
@@ -24,7 +24,7 @@ function once(emitter, name, cb) {
 }
 
 function writetest(size, bsize) {
-  var s = fs.createWriteStream(path, {'flags': 'w', 'encoding': 'binary', 'mode': 0644});
+  var s = fs.createBufferedWriteStream(path, {'flags': 'w', 'encoding': 'binary', 'mode': 0644});
   var remaining = size;
   var buf = bufit(bsize);
 
@@ -61,7 +61,7 @@ function readtest(size, bsize) {
 
 function wt(tsize, bsize, done) {
   var start = Date.now();
-  s = writetest(tsize, bsizes[0]);
+  s = writetest(tsize, bsize);
   s.addListener('close', function() {
     var end = Date.now();
     var diff = end - start;
