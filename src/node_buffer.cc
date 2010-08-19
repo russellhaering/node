@@ -111,7 +111,6 @@ static inline Blob * blob_new(size_t length) {
     if ((length > blobp->current->length - blobp->offset) || blobp->current == NULL) {
       blobp->current = (Blob*) malloc(sizeof(Blob));
       if (!blobp->current) {
-        free(blobp->current);
         return NULL;
       }
 
