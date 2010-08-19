@@ -50,23 +50,91 @@ struct Blob_ {
   unsigned int refs;
   size_t length;
   char *data;
+  Blob_ *parent;
 };
 typedef struct Blob_ Blob;
 
+#define CHUNKUSEMAX 256
+#define CHUNKSIZE (8 * 1024)
+
+typedef struct {
+  Blob *current;
+  size_t offset;
+} BlobParent;
+
+BlobParent *blobp = NULL;
 
 static inline Blob * blob_new(size_t length) {
   Blob * blob  = (Blob*) malloc(sizeof(Blob));
   if (!blob) return NULL;
 
-  blob->data = (char*) malloc(length);
-  if (!blob->data) {
-    free(blob);
-    return NULL;
+  if (length > CHUNKUSEMAX) {
+    blob->data = (char*) malloc(length);
+    if (!blob->data) {
+      free(blob);
+      return NULL;
+    }
+
+    V8::AdjustAmountOfExternalAllocatedMemory(sizeof(Blob) + length);
+    blob->length = length;
+    blob->refs = 0;
+    blob->parent = NULL;
+  }
+  else {
+    if (blobp == NULL) {
+
+      blobp = (BlobParent*) malloc(sizeof(BlobParent));
+
+      if (!blobp) return NULL;
+
+      blobp->current = (Blob*) malloc(sizeof(Blob));
+      blobp->offset = 0;
+
+      if (!blobp->current) {
+        free(blobp);
+        blobp = NULL;
+        return NULL;
+      }
+
+      blobp->current->data = (char*) malloc(CHUNKSIZE);
+      if (!blobp->current->data) {
+        free(blobp->current);
+        free(blobp);
+        blobp = NULL;
+        return NULL;
+      }
+      blobp->current->length = CHUNKSIZE;
+      blobp->current->parent = NULL;
+      V8::AdjustAmountOfExternalAllocatedMemory(sizeof(BlobParent) + sizeof(Blob) + sizeof(Blob) + CHUNKSIZE);
+    }
+
+    if ((length > blobp->current->length - blobp->offset) || blobp->current == NULL) {
+      blobp->current = (Blob*) malloc(sizeof(Blob));
+      if (!blobp->current) {
+        free(blobp->current);
+        return NULL;
+      }
+
+      blobp->current->data = (char*) malloc(CHUNKSIZE);
+      if (!blobp->current->data) {
+        free(blobp->current);
+        blobp->current = NULL;
+        return NULL;
+      }
+      blobp->current->length = CHUNKSIZE;
+      blobp->current->parent = NULL;
+      V8::AdjustAmountOfExternalAllocatedMemory(sizeof(Blob) + CHUNKSIZE);
+      blobp->offset = 0;
+    }
+
+    blobp->current->refs++;
+    blob->data = (blobp->current->data + blobp->offset);
+    blobp->offset += length;
+    blob->length = length;
+    blob->refs = 0;
+    blob->parent = blobp->current;
   }
 
-  V8::AdjustAmountOfExternalAllocatedMemory(sizeof(Blob) + length);
-  blob->length = length;
-  blob->refs = 0;
   return blob;
 }
 
@@ -80,8 +148,13 @@ static inline void blob_unref(Blob *blob) {
   assert(blob->refs > 0);
   if (--blob->refs == 0) {
     //fprintf(stderr, "free %d bytes\n", blob->length);
-    V8::AdjustAmountOfExternalAllocatedMemory(-(sizeof(Blob) + blob->length));
-    free(blob->data);
+    if (blob->parent == NULL) {
+      V8::AdjustAmountOfExternalAllocatedMemory(-(sizeof(Blob) + blob->length));
+      free(blob->data);
+    }
+    else {
+      blob_unref(blob->parent);
+    }
     free(blob);
   }
 }
