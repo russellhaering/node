@@ -234,6 +234,16 @@ Buffer* Buffer::New(size_t size) {
 Handle<Value> Buffer::New(const Arguments &args) {
   HandleScope scope;
 
+  if (!args.IsConstructCall()) {
+    Local<Value> argv[10];
+    for (int i = 0; i < MIN(args.Length(), 10); i++) {
+      argv[i] = args[i];
+    }
+    Local<Object> instance =
+      constructor_template->GetFunction()->NewInstance(args.Length(), argv);
+    return scope.Close(instance);
+  }
+
   Buffer *buffer;
   if (args[0]->IsInt32()) {
     // var buffer = new Buffer(1024);
@@ -779,6 +789,22 @@ Handle<Value> Buffer::ByteLength(const Arguments &args) {
 }
 
 
+Handle<Value> Buffer::MakeFastBuffer(const Arguments &args) {
+  HandleScope scope;
+
+  Buffer *buffer = ObjectWrap::Unwrap<Buffer>(args[0]->ToObject());
+  Local<Object> fast_buffer = args[1]->ToObject();;
+  uint32_t offset = args[2]->Uint32Value();
+  uint32_t length = args[3]->Uint32Value();
+
+  fast_buffer->SetIndexedPropertiesToPixelData((uint8_t*)buffer->data() + offset,
+                                               length);
+
+  return Undefined();
+}
+
+
+
 void Buffer::Initialize(Handle<Object> target) {
   HandleScope scope;
 
@@ -809,6 +835,9 @@ void Buffer::Initialize(Handle<Object> target) {
   NODE_SET_METHOD(constructor_template->GetFunction(),
                   "byteLength",
                   Buffer::ByteLength);
+  NODE_SET_METHOD(constructor_template->GetFunction(),
+                  "makeFastBuffer",
+                  Buffer::MakeFastBuffer);
 
   target->Set(String::NewSymbol("Buffer"), constructor_template->GetFunction());
 }

@@ -47,9 +47,23 @@ process.evalcx = function () {
 var nextTickQueue = [];
 
 process._tickCallback = function () {
-  for (var l = nextTickQueue.length; l; l--) {
-    nextTickQueue.shift()();
+  var l = nextTickQueue.length;
+  if (l === 0) return;
+
+  try {
+    for (var i = 0; i < l; i++) {
+      nextTickQueue[i]();
+    }
   }
+  catch(e) {
+    nextTickQueue.splice(0, i+1);
+    if (i+1 < l) {
+      process._needTickCallback();
+    }
+    throw e;
+  }
+
+  nextTickQueue.splice(0, l);
 };
 
 process.nextTick = function (callback) {
@@ -593,7 +607,7 @@ global.setTimeout = function (callback, after) {
 global.setInterval = function (callback, repeat) {
   var timer = new process.Timer();
   addTimerListener.apply(timer, arguments);
-  timer.start(repeat, repeat);
+  timer.start(repeat, repeat ? repeat : 1);
   return timer;
 };
 
