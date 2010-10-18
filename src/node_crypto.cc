@@ -255,14 +255,14 @@ static int serr(SSL *ssl, const char* func, int rv)
     char buf[512];
     /* TODO: look at ssl error queue */
     ERR_error_string_n(ERR_get_error(), &buf[0], sizeof(buf));
-    fprintf(stderr, "[%p] SSL: %s failed: (%d:%d) %s\n", ssl, func, err, rv, buf);
+    /* fprintf(stderr, "[%p] SSL: %s failed: (%d:%d) %s\n", ssl, func, err, rv, buf); */
     return rv;
   }
   else if (err == SSL_ERROR_WANT_WRITE) {
-    fprintf(stderr, "[%p] SSL: %s want write\n", ssl, func);
+    /* fprintf(stderr, "[%p] SSL: %s want write\n", ssl, func); */
   }
   else if (err == SSL_ERROR_WANT_READ) {
-    fprintf(stderr, "[%p] SSL: %s want read\n", ssl, func);
+    /* fprintf(stderr, "[%p] SSL: %s want read\n", ssl, func); */
   }
 
   return 0;
@@ -360,7 +360,6 @@ Handle<Value> SecureStream::EncIn(const Arguments& args) {
 
   int bytes_written = serr(ss->ssl_, "BIO_write", BIO_write(ss->bio_read_, (char*)buffer_data + off, len));
 
-  fprintf(stderr, "[%p] BIO_Write: %d\n", ss->ssl_, bytes_written);
   if (bytes_written < 0) {
     if (errno == EAGAIN || errno == EINTR) return Null();
     return ThrowException(ErrnoException(errno, "read"));
@@ -419,7 +418,6 @@ Handle<Value> SecureStream::ClearOut(const Arguments& args) {
   }
 
   bytes_read = serr(ss->ssl_, "SSL_read:ClearOut", SSL_read(ss->ssl_, (char*)buffer_data + off, len));
-  fprintf(stderr, "[%p] SSL_read: %d\n", ss->ssl_, bytes_read);
   if (bytes_read < 0) {
     int err = SSL_get_error(ss->ssl_, bytes_read);
     if (err == SSL_ERROR_WANT_READ) {
@@ -488,7 +486,6 @@ Handle<Value> SecureStream::EncOut(const Arguments& args) {
   }
 
   int bytes_read = serr(ss->ssl_, "BIO_read:EncOut", BIO_read(ss->bio_write_, (char*)buffer_data + off, len));
-  fprintf(stderr, "[%p] BIO_read: %d\n", ss->ssl_, bytes_read);
 
   return scope.Close(Integer::New(bytes_read));
 }
@@ -535,8 +532,6 @@ Handle<Value> SecureStream::ClearIn(const Arguments& args) {
     return scope.Close(Integer::New(0));
   }
   int bytes_written = serr(ss->ssl_, "SSL_write:ClearIn", SSL_write(ss->ssl_, (char*)buffer_data + off, len));
-
-  fprintf(stderr, "[%p] SSL_write: %d\n", ss->ssl_, bytes_written);
 
   return scope.Close(Integer::New(bytes_written));
 }
