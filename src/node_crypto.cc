@@ -285,6 +285,7 @@ void SecureStream::Initialize(Handle<Object> target) {
   NODE_SET_PROTOTYPE_METHOD(t, "isInitFinished", SecureStream::IsInitFinished);
   NODE_SET_PROTOTYPE_METHOD(t, "verifyPeer", SecureStream::VerifyPeer);
   NODE_SET_PROTOTYPE_METHOD(t, "getCurrentCipher", SecureStream::GetCurrentCipher);
+  NODE_SET_PROTOTYPE_METHOD(t, "start", SecureStream::Start);
   NODE_SET_PROTOTYPE_METHOD(t, "shutdown", SecureStream::Shutdown);
   NODE_SET_PROTOTYPE_METHOD(t, "close", SecureStream::Close);
 
@@ -590,6 +591,31 @@ Handle<Value> SecureStream::GetPeerCertificate(const Arguments& args) {
   return scope.Close(info);
 }
 
+Handle<Value> SecureStream::Start(const Arguments& args) {
+  HandleScope scope;
+  int rv;
+
+  SecureStream *ss = ObjectWrap::Unwrap<SecureStream>(args.Holder());
+
+  if (!SSL_is_init_finished(ss->ssl_)) {
+    if (ss->is_server_) {
+      rv = serr(ss->ssl_, "SSL_accept:ClearOut", SSL_accept(ss->ssl_));
+    } else {
+      rv = serr(ss->ssl_, "SSL_connect:ClearOut", SSL_connect(ss->ssl_));
+    }
+    if (rv < 0) {
+      return ThrowException(Exception::Error(v8::String::New(ssl_error_buf)));
+    }
+    if (rv == 1) {
+      return True();
+    }
+    else {
+      return False();
+    }
+  }
+
+  return False();
+}
 
 Handle<Value> SecureStream::Shutdown(const Arguments& args) {
   HandleScope scope;
