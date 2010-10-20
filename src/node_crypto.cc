@@ -599,9 +599,9 @@ Handle<Value> SecureStream::Start(const Arguments& args) {
 
   if (!SSL_is_init_finished(ss->ssl_)) {
     if (ss->is_server_) {
-      rv = serr(ss->ssl_, "SSL_accept:ClearOut", SSL_accept(ss->ssl_));
+      rv = serr(ss->ssl_, "SSL_accept:Start", SSL_accept(ss->ssl_));
     } else {
-      rv = serr(ss->ssl_, "SSL_connect:ClearOut", SSL_connect(ss->ssl_));
+      rv = serr(ss->ssl_, "SSL_connect:Start", SSL_connect(ss->ssl_));
     }
     if (rv < 0) {
       return ThrowException(Exception::Error(v8::String::New(ssl_error_buf)));
@@ -614,7 +614,7 @@ Handle<Value> SecureStream::Start(const Arguments& args) {
     }
   }
 
-  return False();
+  return True();
 }
 
 Handle<Value> SecureStream::Shutdown(const Arguments& args) {
