@@ -23,11 +23,13 @@ class SecureContext : ObjectWrap {
 
   SSL_CTX *ctx_;
   X509_STORE *ca_store_;
+  char* hostname;
 
  protected:
   static v8::Handle<v8::Value> New(const v8::Arguments& args);
   static v8::Handle<v8::Value> Init(const v8::Arguments& args);
   static v8::Handle<v8::Value> SetKey(const v8::Arguments& args);
+  static v8::Handle<v8::Value> SetHostName(const v8::Arguments& args);
   static v8::Handle<v8::Value> SetCert(const v8::Arguments& args);
   static v8::Handle<v8::Value> AddCACert(const v8::Arguments& args);
   static v8::Handle<v8::Value> SetCiphers(const v8::Arguments& args);
@@ -36,9 +38,13 @@ class SecureContext : ObjectWrap {
   SecureContext() : ObjectWrap() {
     ctx_ = NULL;
     ca_store_ = NULL;
+    hostname = NULL;
   }
 
   ~SecureContext() {
+    if (hostname) {
+      free(hostname);
+    }
     // Free up
   }
 

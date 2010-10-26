@@ -45,6 +45,7 @@ void SecureContext::Initialize(Handle<Object> target) {
 
   NODE_SET_PROTOTYPE_METHOD(t, "init", SecureContext::Init);
   NODE_SET_PROTOTYPE_METHOD(t, "setKey", SecureContext::SetKey);
+  NODE_SET_PROTOTYPE_METHOD(t, "setHostName", SecureContext::SetHostName);
   NODE_SET_PROTOTYPE_METHOD(t, "setCert", SecureContext::SetCert);
   NODE_SET_PROTOTYPE_METHOD(t, "addCACert", SecureContext::AddCACert);
   NODE_SET_PROTOTYPE_METHOD(t, "setCiphers", SecureContext::SetCiphers);
@@ -108,6 +109,21 @@ Handle<Value> SecureContext::Init(const Arguments& args) {
 
   sc->ca_store_ = X509_STORE_new();
   SSL_CTX_set_cert_store(sc->ctx_, sc->ca_store_);
+  return True();
+}
+
+Handle<Value> SecureContext::SetHostName(const Arguments& args) {
+  HandleScope scope;
+
+  SecureContext *sc = ObjectWrap::Unwrap<SecureContext>(args.Holder());
+
+  if (args.Length() != 1 || !args[0]->IsString()) {
+    return ThrowException(Exception::TypeError(String::New("Bad parameter")));
+  }
+
+  String::Utf8Value sni(args[0]->ToString());
+  sc->hostname = strdup(*sni);
+
   return True();
 }
 
@@ -321,6 +337,11 @@ Handle<Value> SecureStream::New(const Arguments& args) {
     SSL_set_accept_state(p->ssl_);
   } else {
     SSL_set_connect_state(p->ssl_);
+#if OPENSSL_VERSION_NUMBER >= 0x0090806fL && !defined(OPENSSL_NO_TLSEXT)
+    if (sc->hostname) {
+      SSL_set_tlsext_host_name(p->ssl_, sc->hostname);
+    }
+#endif
   }
 
   return args.This();
