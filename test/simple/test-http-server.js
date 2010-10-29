@@ -15,6 +15,7 @@ var server = http.createServer(function (req, res) {
   req.id = request_number++;
 
   if (req.id == 0) {
+    common.error("req 0");
     assert.equal("GET", req.method);
     assert.equal("/hello", url.parse(req.url).pathname);
     assert.equal("world", qs.parse(url.parse(req.url).query).hello);
@@ -43,6 +44,7 @@ var server = http.createServer(function (req, res) {
     res.writeHead(200, {"Content-Type": "text/plain"});
     res.write(url.parse(req.url).pathname);
     res.end();
+    common.error("response");
   }, 1);
 
 });
