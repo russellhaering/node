@@ -30,6 +30,7 @@ server.listen(common.PORT, function () {
       wasUpgrade = true;
       
       client.removeListener('upgrade', onUpgrade);
+      socket.on('end', onEnd);
       socket.end();    
     }
     client.on('upgrade', onUpgrade);
@@ -42,7 +43,6 @@ server.listen(common.PORT, function () {
         fn && process.nextTick(fn);
       }
     }
-    client.on('end', onEnd);
     
     request.write('head');
 
