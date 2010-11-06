@@ -67,8 +67,7 @@ var https_server = http.createServer(function (req, res) {
 
   if (req.id == 3) {
     assert.equal("bar", req.headers['x-x']);
-    this.close();
-    //console.log("server closed");
+    https_server.close();
   }
   setTimeout(function () {
     res.writeHead(200, {"Content-Type": "text/plain"});
@@ -82,16 +81,16 @@ https_server.listen(common.PORT);
 
 https_server.addListener("listening", function() {
   var c = net.createConnection(common.PORT);
+  var spair = crypto.createPair(credentials);
 
-  c.setEncoding("utf8");
+  spair.encrypted.pipe(c);
+  c.pipe(spair.encrypted);
 
-  c.addListener("connect", function () {
-    c.setSecure(credentials);
-  });
+  var cl = spair.cleartext;
 
-  c.addListener("secure", function () {
-      var verified = c.verifyPeer();
-      var peerDN = JSON.stringify(c.getPeerCertificate());
+  spair.addListener("secure", function () {
+      var verified = spair.verifyPeer();
+      var peerDN = JSON.stringify(spair.getPeerCertificate());
       assert.equal(verified, true);
       assert.equal(peerDN, '{"subject":"/C=UK/ST=Acknack Ltd/L=Rhys Jones'
         + '/O=node.js/OU=Test TLS Certificate/CN=localhost",'
@@ -100,34 +99,34 @@ https_server.addListener("listening", function() {
         + '"Nov 11 09:52:22 2009 GMT","valid_to":'
         + '"Nov  6 09:52:22 2029 GMT",'
         + '"fingerprint":"2A:7A:C2:DD:E5:F9:CC:53:72:35:99:7A:02:5A:71:38:52:EC:8A:DF"}');
-    c.write( "GET /hello?hello=world&foo=b==ar HTTP/1.1\r\n\r\n" );
+    cl.write( "GET /hello?hello=world&foo=b==ar HTTP/1.1\r\n\r\n" );
     requests_sent += 1;
   });
 
-  c.addListener("data", function (chunk) {
+  cl.addListener("data", function (chunk) {
     server_response += chunk;
 
     if (requests_sent == 1) {
-      c.write("POST /quit HTTP/1.1\r\n\r\n");
+      cl.write("POST /quit HTTP/1.1\r\n\r\n");
       requests_sent += 1;
     }
 
     if (requests_sent == 2) {
-      c.write("GET / HTTP/1.1\r\nX-X: foo\r\n\r\n"
+      cl.write("GET / HTTP/1.1\r\nX-X: foo\r\n\r\n"
              +"GET / HTTP/1.1\r\nX-X: bar\r\n\r\n");
-      c.end();
-      assert.equal(c.readyState, "readOnly");
+      cl.end();
+//      assert.equal(c.readyState, "readOnly");
       requests_sent += 2;
     }
 
   });
 
-  c.addListener("end", function () {
+  cl.addListener("end", function () {
     client_got_eof = true;
   });
 
-  c.addListener("close", function () {
-    assert.equal(c.readyState, "closed");
+  cl.addListener("close", function () {
+//    assert.equal(c.readyState, "closed");
   });
 });
 
