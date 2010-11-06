@@ -73,6 +73,7 @@ var https_server = http.createServer(function (req, res) {
     res.writeHead(200, {"Content-Type": "text/plain"});
     res.write(url.parse(req.url).pathname);
     res.end();
+    console.log('sending reply: '+ res.id);
   }, 1);
 
 });
@@ -106,19 +107,21 @@ https_server.addListener("listening", function() {
   cl.addListener("data", function (chunk) {
     server_response += chunk;
 
-    if (requests_sent == 1) {
-      cl.write("POST /quit HTTP/1.1\r\n\r\n");
-      requests_sent += 1;
+    if (requests_sent == 4) {
+      cl.end();
+      c.end();
     }
-
     if (requests_sent == 2) {
       cl.write("GET / HTTP/1.1\r\nX-X: foo\r\n\r\n"
              +"GET / HTTP/1.1\r\nX-X: bar\r\n\r\n");
-      cl.end();
 //      assert.equal(c.readyState, "readOnly");
       requests_sent += 2;
     }
 
+    if (requests_sent == 1) {
+      cl.write("POST /quit HTTP/1.1\r\n\r\n");
+      requests_sent += 1;
+    }
   });
 
   cl.addListener("end", function () {
