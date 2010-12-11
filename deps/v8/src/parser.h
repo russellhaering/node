@@ -31,13 +31,14 @@
 #include "allocation.h"
 #include "ast.h"
 #include "scanner.h"
+#include "scopes.h"
+#include "preparse-data.h"
 
 namespace v8 {
 namespace internal {
 
 class CompilationInfo;
 class FuncNameInferrer;
-class ParserFactory;
 class ParserLog;
 class PositionStack;
 class Target;
@@ -123,32 +124,15 @@ class ScriptDataImpl : public ScriptData {
   Vector<const char*> BuildArgs();
 
   int symbol_count() {
-    return (store_.length() > kHeaderSize) ? store_[kSymbolCountOffset] : 0;
+    return (store_.length() > PreparseDataConstants::kHeaderSize)
+        ? store_[PreparseDataConstants::kSymbolCountOffset]
+        : 0;
   }
   // The following functions should only be called if SanityCheck has
   // returned true.
-  bool has_error() { return store_[kHasErrorOffset]; }
-  unsigned magic() { return store_[kMagicOffset]; }
-  unsigned version() { return store_[kVersionOffset]; }
-
-  static const unsigned kMagicNumber = 0xBadDead;
-  static const unsigned kCurrentVersion = 4;
-
-  static const int kMagicOffset = 0;
-  static const int kVersionOffset = 1;
-  static const int kHasErrorOffset = 2;
-  static const int kFunctionsSizeOffset = 3;
-  static const int kSymbolCountOffset = 4;
-  static const int kSizeOffset = 5;
-  static const int kHeaderSize = 6;
-
-  // If encoding a message, the following positions are fixed.
-  static const int kMessageStartPos = 0;
-  static const int kMessageEndPos = 1;
-  static const int kMessageArgCountPos = 2;
-  static const int kMessageTextPos = 3;
-
-  static const byte kNumberTerminator = 0x80u;
+  bool has_error() { return store_[PreparseDataConstants::kHasErrorOffset]; }
+  unsigned magic() { return store_[PreparseDataConstants::kMagicOffset]; }
+  unsigned version() { return store_[PreparseDataConstants::kVersionOffset]; }
 
  private:
   Vector<unsigned> store_;
@@ -196,6 +180,8 @@ class ParserApi {
                                          v8::Extension* extension);
 };
 
+// ----------------------------------------------------------------------------
+// REGEXP PARSING
 
 // A BuffferedZoneList is an automatically growing list, just like (and backed
 // by) a ZoneList, that is optimized for the case of adding and removing
@@ -411,51 +397,44 @@ class RegExpParser {
   uc32 Next();
   FlatStringReader* in() { return in_; }
   void ScanForCaptures();
-  uc32 current_;
-  bool has_more_;
-  bool multiline_;
-  int next_pos_;
-  FlatStringReader* in_;
+
   Handle<String>* error_;
-  bool simple_;
-  bool contains_anchor_;
   ZoneList<RegExpCapture*>* captures_;
-  bool is_scanned_for_captures_;
+  FlatStringReader* in_;
+  uc32 current_;
+  int next_pos_;
   // The capture count is only valid after we have scanned for captures.
   int capture_count_;
+  bool has_more_;
+  bool multiline_;
+  bool simple_;
+  bool contains_anchor_;
+  bool is_scanned_for_captures_;
   bool failed_;
 };
 
+// ----------------------------------------------------------------------------
+// JAVASCRIPT PARSING
 
 class Parser {
  public:
-  Parser(Handle<Script> script, bool allow_natives_syntax,
-         v8::Extension* extension, ParserMode is_pre_parsing,
-         ParserFactory* factory, ParserLog* log, ScriptDataImpl* pre_data);
+  Parser(Handle<Script> script,
+         bool allow_natives_syntax,
+         v8::Extension* extension,
+         ScriptDataImpl* pre_data);
   virtual ~Parser() { }
-
-  // Pre-parse the program from the character stream; returns true on
-  // success, false if a stack-overflow happened during parsing.
-  bool PreParseProgram(Handle<String> source, unibrow::CharacterStream* stream);
-
-  void ReportMessage(const char* message, Vector<const char*> args);
-  virtual void ReportMessageAt(Scanner::Location loc,
-                               const char* message,
-                               Vector<const char*> args) = 0;
-
 
   // Returns NULL if parsing failed.
   FunctionLiteral* ParseProgram(Handle<String> source,
                                 bool in_global_context);
+
   FunctionLiteral* ParseLazy(Handle<SharedFunctionInfo> info);
 
-  // The minimum number of contiguous assignment that will
-  // be treated as an initialization block. Benchmarks show that
-  // the overhead exceeds the savings below this limit.
-  static const int kMinInitializationBlock = 3;
+  void ReportMessageAt(Scanner::Location loc,
+                       const char* message,
+                       Vector<const char*> args);
 
  protected:
-
   enum Mode {
     PARSE_LAZILY,
     PARSE_EAGERLY
@@ -464,28 +443,9 @@ class Parser {
   // Report syntax error
   void ReportUnexpectedToken(Token::Value token);
   void ReportInvalidPreparseData(Handle<String> name, bool* ok);
-
-  Handle<Script> script_;
-  Scanner scanner_;
-
-  Scope* top_scope_;
-  int with_nesting_level_;
-
-  TemporaryScope* temp_scope_;
-  Mode mode_;
-
-  Target* target_stack_;  // for break, continue statements
-  bool allow_natives_syntax_;
-  v8::Extension* extension_;
-  ParserFactory* factory_;
-  ParserLog* log_;
-  bool is_pre_parsing_;
-  ScriptDataImpl* pre_data_;
-  FuncNameInferrer* fni_;
+  void ReportMessage(const char* message, Vector<const char*> args);
 
   bool inside_with() const { return with_nesting_level_ > 0; }
-  ParserFactory* factory() const { return factory_; }
-  ParserLog* log() const { return log_; }
   Scanner& scanner()  { return scanner_; }
   Mode mode() const { return mode_; }
   ScriptDataImpl* pre_data() const { return pre_data_; }
@@ -494,7 +454,7 @@ class Parser {
   // which is set to false if parsing failed; it is unchanged otherwise.
   // By making the 'exception handling' explicit, we are forced to check
   // for failure at the call sites.
-  void* ParseSourceElements(ZoneListWrapper<Statement>* processor,
+  void* ParseSourceElements(ZoneList<Statement*>* processor,
                             int end_token, bool* ok);
   Statement* ParseStatement(ZoneStringList* labels, bool* ok);
   Statement* ParseFunctionDeclaration(bool* ok);
@@ -586,8 +546,25 @@ class Parser {
   // Magical syntax support.
   Expression* ParseV8Intrinsic(bool* ok);
 
-  INLINE(Token::Value peek()) { return scanner_.peek(); }
-  INLINE(Token::Value Next()) { return scanner_.Next(); }
+  INLINE(Token::Value peek()) {
+    if (stack_overflow_) return Token::ILLEGAL;
+    return scanner_.peek();
+  }
+
+  INLINE(Token::Value Next()) {
+    // BUG 1215673: Find a thread safe way to set a stack limit in
+    // pre-parse mode. Otherwise, we cannot safely pre-parse from other
+    // threads.
+    if (stack_overflow_) {
+      return Token::ILLEGAL;
+    }
+    if (StackLimitCheck().HasOverflowed()) {
+      // Any further calls to Next or peek will return the illegal token.
+      stack_overflow_ = true;
+    }
+    return scanner_.Next();
+  }
+
   INLINE(void Consume(Token::Value token));
   void Expect(Token::Value token, bool* ok);
   bool Check(Token::Value token);
@@ -607,16 +584,38 @@ class Parser {
                                            bool* ok);
 
   // Parser support
-  virtual VariableProxy* Declare(Handle<String> name, Variable::Mode mode,
-                                 FunctionLiteral* fun,
-                                 bool resolve,
-                                 bool* ok) = 0;
+  VariableProxy* Declare(Handle<String> name, Variable::Mode mode,
+                         FunctionLiteral* fun,
+                         bool resolve,
+                         bool* ok);
 
   bool TargetStackContainsLabel(Handle<String> label);
   BreakableStatement* LookupBreakTarget(Handle<String> label, bool* ok);
   IterationStatement* LookupContinueTarget(Handle<String> label, bool* ok);
 
   void RegisterTargetUse(BreakTarget* target, Target* stop);
+
+  // Factory methods.
+
+  Statement* EmptyStatement() {
+    static v8::internal::EmptyStatement empty;
+    return &empty;
+  }
+
+  Scope* NewScope(Scope* parent, Scope::Type type, bool inside_with);
+
+  Handle<String> LookupSymbol(int symbol_id,
+                              Vector<const char> string);
+
+  Handle<String> LookupCachedSymbol(int symbol_id,
+                                    Vector<const char> string);
+
+  Expression* NewCall(Expression* expression,
+                      ZoneList<Expression*>* arguments,
+                      int pos) {
+    return new Call(expression, arguments, pos);
+  }
+
 
   // Create a number literal.
   Literal* NewNumberLiteral(double value);
@@ -639,6 +638,25 @@ class Parser {
   Expression* NewThrowError(Handle<String> constructor,
                             Handle<String> type,
                             Vector< Handle<Object> > arguments);
+
+  ZoneList<Handle<String> > symbol_cache_;
+
+  Handle<Script> script_;
+  V8JavaScriptScanner scanner_;
+
+  Scope* top_scope_;
+  int with_nesting_level_;
+
+  TemporaryScope* temp_scope_;
+  Mode mode_;
+
+  Target* target_stack_;  // for break, continue statements
+  bool allow_natives_syntax_;
+  v8::Extension* extension_;
+  bool is_pre_parsing_;
+  ScriptDataImpl* pre_data_;
+  FuncNameInferrer* fni_;
+  bool stack_overflow_;
 };
 
 
@@ -672,6 +690,9 @@ class CompileTimeValue: public AllStatic {
   DISALLOW_IMPLICIT_CONSTRUCTORS(CompileTimeValue);
 };
 
+
+// ----------------------------------------------------------------------------
+// JSON PARSING
 
 // JSON is a subset of JavaScript, as specified in, e.g., the ECMAScript 5
 // specification section 15.12.1 (and appendix A.8).
@@ -714,7 +735,8 @@ class JsonParser BASE_EMBEDDED {
   // Converts the currently parsed literal to a JavaScript String.
   Handle<String> GetString();
 
-  Scanner scanner_;
+  JsonScanner scanner_;
+  bool stack_overflow_;
 };
 } }  // namespace v8::internal
 

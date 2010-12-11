@@ -26,6 +26,8 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "v8.h"
 
@@ -34,7 +36,7 @@
 #include "parser.h"
 #include "utils.h"
 #include "execution.h"
-
+#include "preparser.h"
 #include "cctest.h"
 
 namespace i = ::v8::internal;
@@ -238,4 +240,123 @@ TEST(Preparsing) {
   const char* message = pre_impl->BuildMessage();
   i::Vector<const char*> args = pre_impl->BuildArgs();
   CHECK_GT(strlen(message), 0);
+}
+
+
+TEST(StandAlonePreParser) {
+  int marker;
+  i::StackGuard::SetStackLimit(
+      reinterpret_cast<uintptr_t>(&marker) - 128 * 1024);
+
+  const char* programs[] = {
+      "{label: 42}",
+      "var x = 42;",
+      "function foo(x, y) { return x + y; }",
+      "native function foo(); return %ArgleBargle(glop);",
+      "var x = new new Function('this.x = 42');",
+      NULL
+  };
+
+  uintptr_t stack_limit = i::StackGuard::real_climit();
+  for (int i = 0; programs[i]; i++) {
+    const char* program = programs[i];
+    unibrow::Utf8InputBuffer<256> stream(program, strlen(program));
+    i::CompleteParserRecorder log;
+    i::V8JavaScriptScanner scanner;
+    scanner.Initialize(i::Handle<i::String>::null(), &stream);
+
+    v8::preparser::PreParser::PreParseResult result =
+        v8::preparser::PreParser::PreParseProgram(&scanner,
+                                                  &log,
+                                                  true,
+                                                  stack_limit);
+    CHECK_EQ(v8::preparser::PreParser::kPreParseSuccess, result);
+    i::ScriptDataImpl data(log.ExtractData());
+    CHECK(!data.has_error());
+  }
+}
+
+
+TEST(RegressChromium62639) {
+  int marker;
+  i::StackGuard::SetStackLimit(
+      reinterpret_cast<uintptr_t>(&marker) - 128 * 1024);
+
+  const char* program = "var x = 'something';\n"
+                        "escape: function() {}";
+  // Fails parsing expecting an identifier after "function".
+  // Before fix, didn't check *ok after Expect(Token::Identifier, ok),
+  // and then used the invalid currently scanned literal. This always
+  // failed in debug mode, and sometimes crashed in release mode.
+
+  unibrow::Utf8InputBuffer<256> stream(program, strlen(program));
+  i::ScriptDataImpl* data =
+      i::ParserApi::PreParse(i::Handle<i::String>::null(), &stream, NULL);
+  CHECK(data->HasError());
+  delete data;
+}
+
+
+TEST(Regress928) {
+  // Preparsing didn't consider the catch clause of a try statement
+  // as with-content, which made it assume that a function inside
+  // the block could be lazily compiled, and an extra, unexpected,
+  // entry was added to the data.
+  int marker;
+  i::StackGuard::SetStackLimit(
+      reinterpret_cast<uintptr_t>(&marker) - 128 * 1024);
+
+  const char* program =
+      "try { } catch (e) { var foo = function () { /* first */ } }"
+      "var bar = function () { /* second */ }";
+
+  unibrow::Utf8InputBuffer<256> stream(program, strlen(program));
+  i::ScriptDataImpl* data =
+      i::ParserApi::PartialPreParse(i::Handle<i::String>::null(),
+                                    &stream, NULL);
+  CHECK(!data->HasError());
+
+  data->Initialize();
+
+  int first_function = strstr(program, "function") - program;
+  int first_lbrace = first_function + strlen("function () ");
+  CHECK_EQ('{', program[first_lbrace]);
+  i::FunctionEntry entry1 = data->GetFunctionEntry(first_lbrace);
+  CHECK(!entry1.is_valid());
+
+  int second_function = strstr(program + first_lbrace, "function") - program;
+  int second_lbrace = second_function + strlen("function () ");
+  CHECK_EQ('{', program[second_lbrace]);
+  i::FunctionEntry entry2 = data->GetFunctionEntry(second_lbrace);
+  CHECK(entry2.is_valid());
+  CHECK_EQ('}', program[entry2.end_pos() - 1]);
+  delete data;
+}
+
+
+TEST(PreParseOverflow) {
+  int marker;
+  i::StackGuard::SetStackLimit(
+      reinterpret_cast<uintptr_t>(&marker) - 128 * 1024);
+
+  size_t kProgramSize = 1024 * 1024;
+  i::SmartPointer<char> program(
+      reinterpret_cast<char*>(malloc(kProgramSize + 1)));
+  memset(*program, '(', kProgramSize);
+  program[kProgramSize] = '\0';
+
+  uintptr_t stack_limit = i::StackGuard::real_climit();
+
+  unibrow::Utf8InputBuffer<256> stream(*program, strlen(*program));
+  i::CompleteParserRecorder log;
+  i::V8JavaScriptScanner scanner;
+  scanner.Initialize(i::Handle<i::String>::null(), &stream);
+
+
+  v8::preparser::PreParser::PreParseResult result =
+      v8::preparser::PreParser::PreParseProgram(&scanner,
+                                                &log,
+                                                true,
+                                                stack_limit);
+  CHECK_EQ(v8::preparser::PreParser::kPreParseStackOverflow, result);
 }

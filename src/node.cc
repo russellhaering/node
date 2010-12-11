@@ -83,7 +83,6 @@ static int max_stack_size = 0;
 
 static ev_check check_tick_watcher;
 static ev_prepare prepare_tick_watcher;
-static ev_idle tick_spinner;
 static bool need_tick_cb;
 static Persistent<String> tick_callback_sym;
 
@@ -173,19 +172,7 @@ static void Check(EV_P_ ev_check *watcher, int revents) {
 static Handle<Value> NeedTickCallback(const Arguments& args) {
   HandleScope scope;
   need_tick_cb = true;
-  // TODO: this tick_spinner shouldn't be necessary. An ev_prepare should be
-  // sufficent, the problem is only in the case of the very last "tick" -
-  // there is nothing left to do in the event loop and libev will exit. The
-  // ev_prepare callback isn't called before exiting. Thus we start this
-  // tick_spinner to keep the event loop alive long enough to handle it.
-  ev_idle_start(EV_DEFAULT_UC_ &tick_spinner);
   return Undefined();
-}
-
-
-static void Spin(EV_P_ ev_idle *watcher, int revents) {
-  assert(watcher == &tick_spinner);
-  assert(revents == EV_IDLE);
 }
 
 
@@ -194,7 +181,6 @@ static void Tick(void) {
   if (!need_tick_cb) return;
 
   need_tick_cb = false;
-  ev_idle_stop(EV_DEFAULT_UC_ &tick_spinner);
 
   HandleScope scope;
 
@@ -939,26 +925,24 @@ ssize_t DecodeWrite(char *buf,
   return buflen;
 }
 
-// Extracts a C str from a V8 Utf8Value.
-const char* ToCString(const v8::String::Utf8Value& value) {
-  return *value ? *value : "<str conversion failed>";
-}
 
-static void ReportException(TryCatch &try_catch, bool show_line) {
+void DisplayExceptionLine (TryCatch &try_catch) {
+  HandleScope scope;
+
   Handle<Message> message = try_catch.Message();
 
   node::Stdio::DisableRawMode(STDIN_FILENO);
   fprintf(stderr, "\n");
 
-  if (show_line && !message.IsEmpty()) {
+  if (!message.IsEmpty()) {
     // Print (filename):(line number): (message).
     String::Utf8Value filename(message->GetScriptResourceName());
-    const char* filename_string = ToCString(filename);
+    const char* filename_string = *filename;
     int linenum = message->GetLineNumber();
     fprintf(stderr, "%s:%i\n", filename_string, linenum);
     // Print line of source code.
     String::Utf8Value sourceline(message->GetSourceLine());
-    const char* sourceline_string = ToCString(sourceline);
+    const char* sourceline_string = *sourceline;
 
     // HACK HACK HACK
     //
@@ -992,6 +976,14 @@ static void ReportException(TryCatch &try_catch, bool show_line) {
     }
     fprintf(stderr, "\n");
   }
+}
+
+
+static void ReportException(TryCatch &try_catch, bool show_line) {
+  HandleScope scope;
+  Handle<Message> message = try_catch.Message();
+
+  if (show_line) DisplayExceptionLine(try_catch);
 
   String::Utf8Value trace(try_catch.StackTrace());
 
@@ -1027,19 +1019,6 @@ Local<Value> ExecuteString(Local<String> source, Local<Value> filename) {
   }
 
   return scope.Close(result);
-}
-
-
-static Handle<Value> Loop(const Arguments& args) {
-  HandleScope scope;
-  assert(args.Length() == 0);
-
-  // TODO Probably don't need to start this each time.
-  // Avoids failing on test/simple/test-eio-race3.js though
-  ev_idle_start(EV_DEFAULT_UC_ &eio_poller);
-
-  ev_loop(EV_DEFAULT_UC_ 0);
-  return Undefined();
 }
 
 
@@ -1345,12 +1324,22 @@ Handle<Value> DLOpen(const v8::Arguments& args) {
 }
 
 
+// TODO remove me before 0.4
 Handle<Value> Compile(const Arguments& args) {
   HandleScope scope;
+
 
   if (args.Length() < 2) {
     return ThrowException(Exception::TypeError(
           String::New("needs two arguments.")));
+  }
+
+  static bool shown_error_message = false;
+
+  if (!shown_error_message) {
+    shown_error_message = true;
+    fprintf(stderr, "(node) process.compile should not be used. "
+                    "Use require('vm').runInThisContext instead.\n");
   }
 
   Local<String> source = args[0]->ToString();
@@ -1542,6 +1531,17 @@ static Handle<Value> EnvGetter(Local<String> property,
 }
 
 
+static bool ENV_warning = false;
+static Handle<Value> EnvGetterWarn(Local<String> property,
+                                   const AccessorInfo& info) {
+  if (!ENV_warning) {
+    ENV_warning = true;
+    fprintf(stderr, "(node) Use process.env instead of process.ENV\r\n");
+  }
+  return EnvGetter(property, info);
+}
+
+
 static Handle<Value> EnvSetter(Local<String> property,
                                Local<Value> value,
                                const AccessorInfo& info) {
@@ -1625,7 +1625,7 @@ static void Load(int argc, char *argv[]) {
 
 
   // process.platform
-  process->Set(String::NewSymbol("platform"), String::New(PLATFORM));
+  process->Set(String::NewSymbol("platform"), String::New("PLATFORM"));
 
   // process.argv
   int i, j;
@@ -1641,12 +1641,26 @@ static void Load(int argc, char *argv[]) {
 
   // create process.env
   Local<ObjectTemplate> envTemplate = ObjectTemplate::New();
-  envTemplate->SetNamedPropertyHandler(EnvGetter, EnvSetter, EnvQuery, EnvDeleter, EnvEnumerator, Undefined());
-
-  // assign process.ENV
+  envTemplate->SetNamedPropertyHandler(EnvGetter,
+                                       EnvSetter,
+                                       EnvQuery,
+                                       EnvDeleter,
+                                       EnvEnumerator,
+                                       Undefined());
   Local<Object> env = envTemplate->NewInstance();
-  process->Set(String::NewSymbol("ENV"), env);
   process->Set(String::NewSymbol("env"), env);
+
+  // create process.ENV
+  // TODO: remove me at some point.
+  Local<ObjectTemplate> ENVTemplate = ObjectTemplate::New();
+  ENVTemplate->SetNamedPropertyHandler(EnvGetterWarn,
+                                       EnvSetter,
+                                       EnvQuery,
+                                       EnvDeleter,
+                                       EnvEnumerator,
+                                       Undefined());
+  Local<Object> ENV = ENVTemplate->NewInstance();
+  process->Set(String::NewSymbol("ENV"), ENV);
 
   process->Set(String::NewSymbol("pid"), Integer::New(getpid()));
 
@@ -1661,12 +1675,11 @@ static void Load(int argc, char *argv[]) {
     // as a last ditch effort, fallback on argv[0] ?
     process->Set(String::NewSymbol("execPath"), String::New(argv[0]));
   } else {
-    process->Set(String::NewSymbol("execPath"), String::New(execPath));
+    process->Set(String::NewSymbol("execPath"), String::New(execPath, size));
   }
 
 
   // define various internal methods
-  NODE_SET_METHOD(process, "loop", Loop);
   NODE_SET_METHOD(process, "compile", Compile);
   NODE_SET_METHOD(process, "_needTickCallback", NeedTickCallback);
   NODE_SET_METHOD(process, "reallyExit", Exit);
@@ -1830,7 +1843,8 @@ static void AtExit() {
 
 
 static void SignalExit(int signal) {
-  exit(1);
+  Stdio::DisableRawMode(STDIN_FILENO);
+  _exit(1);
 }
 
 
@@ -1890,7 +1904,7 @@ int Start(int argc, char *argv[]) {
   // Initialize the default ev loop.
 #if defined(__sun)
   // TODO(Ryan) I'm experiencing abnormally high load using Solaris's
-  // EVBACKEND_PORT. Temporarally forcing select() until I debug.
+  // EVBACKEND_PORT. Temporarally forcing poll().
   ev_default_loop(EVBACKEND_POLL);
 #elif defined(__MAC_OS_X_VERSION_MIN_REQUIRED) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 1060
   ev_default_loop(EVBACKEND_KQUEUE);
@@ -1905,8 +1919,6 @@ int Start(int argc, char *argv[]) {
   ev_check_init(&node::check_tick_watcher, node::CheckTick);
   ev_check_start(EV_DEFAULT_UC_ &node::check_tick_watcher);
   ev_unref(EV_DEFAULT_UC);
-
-  ev_idle_init(&node::tick_spinner, node::Spin);
 
   ev_check_init(&node::gc_check, node::Check);
   ev_check_start(EV_DEFAULT_UC_ &node::gc_check);
@@ -1981,6 +1993,36 @@ int Start(int argc, char *argv[]) {
   // Create all the objects, load modules, do everything.
   // so your next reading stop should be node::Load()!
   node::Load(argc, argv);
+
+  // TODO Probably don't need to start this each time.
+  // Avoids failing on test/simple/test-eio-race3.js though
+  ev_idle_start(EV_DEFAULT_UC_ &eio_poller);
+
+
+  do {
+    // All our arguments are loaded. We've evaluated all of the scripts. We
+    // might even have created TCP servers. Now we enter the main eventloop. If
+    // there are no watchers on the loop (except for the ones that were
+    // ev_unref'd) then this function exits. As long as there are active
+    // watchers, it blocks.
+    ev_loop(EV_DEFAULT_UC_ 0);
+
+    Tick();
+
+  } while (need_tick_cb || ev_activecnt(EV_DEFAULT_UC) > 0);
+
+
+  // process.emit('exit')
+  Local<Value> emit_v = process->Get(String::New("emit"));
+  assert(emit_v->IsFunction());
+  Local<Function> emit = Local<Function>::Cast(emit_v);
+  Local<Value> args[] = { String::New("exit") };
+  TryCatch try_catch;
+  emit->Call(process, 1, args);
+  if (try_catch.HasCaught()) {
+    FatalException(try_catch);
+  }
+
 
 #ifndef NDEBUG
   // Clean up.

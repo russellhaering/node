@@ -39,6 +39,8 @@
 #include "objects-visiting.h"
 #include "snapshot.h"
 #include "stub-cache.h"
+#include "extensions/externalize-string-extension.h"
+#include "extensions/gc-extension.h"
 
 namespace v8 {
 namespace internal {
@@ -137,6 +139,8 @@ Handle<String> Bootstrapper::NativesSourceLookup(int index) {
 
 void Bootstrapper::Initialize(bool create_heap_objects) {
   extensions_cache.Initialize(create_heap_objects);
+  GCExtension::Register();
+  ExternalizeStringExtension::Register();
 }
 
 
@@ -496,6 +500,24 @@ Handle<JSFunction> Genesis::CreateEmptyFunction() {
 }
 
 
+static void AddToWeakGlobalContextList(Context* context) {
+  ASSERT(context->IsGlobalContext());
+#ifdef DEBUG
+  { // NOLINT
+    ASSERT(context->get(Context::NEXT_CONTEXT_LINK)->IsUndefined());
+    // Check that context is not in the list yet.
+    for (Object* current = Heap::global_contexts_list();
+         !current->IsUndefined();
+         current = Context::cast(current)->get(Context::NEXT_CONTEXT_LINK)) {
+      ASSERT(current != context);
+    }
+  }
+#endif
+  context->set(Context::NEXT_CONTEXT_LINK, Heap::global_contexts_list());
+  Heap::set_global_contexts_list(context);
+}
+
+
 void Genesis::CreateRoots() {
   // Allocate the global context FixedArray first and then patch the
   // closure and extension object later (we need the empty function
@@ -504,6 +526,7 @@ void Genesis::CreateRoots() {
   global_context_ =
       Handle<Context>::cast(
           GlobalHandles::Create(*Factory::NewGlobalContext()));
+  AddToWeakGlobalContextList(*global_context_);
   Top::set_context(*global_context());
 
   // Allocate the message listeners object.
@@ -1592,7 +1615,7 @@ bool Genesis::InstallJSBuiltins(Handle<JSBuiltinsObject> builtins) {
         = Handle<SharedFunctionInfo>(function->shared());
     if (!EnsureCompiled(shared, CLEAR_EXCEPTION)) return false;
     // Set the code object on the function object.
-    function->set_code(function->shared()->code());
+    function->ReplaceCode(function->shared()->code());
     builtins->set_javascript_builtin_code(id, shared->code());
   }
   return true;
@@ -1780,6 +1803,7 @@ Genesis::Genesis(Handle<Object> global_object,
   if (!new_context.is_null()) {
     global_context_ =
       Handle<Context>::cast(GlobalHandles::Create(*new_context));
+    AddToWeakGlobalContextList(*global_context_);
     Top::set_context(*global_context_);
     i::Counters::contexts_created_by_snapshot.Increment();
     result_ = global_context_;
@@ -1814,11 +1838,6 @@ Genesis::Genesis(Handle<Object> global_object,
     if (!ConfigureGlobalObjects(global_template)) return;
     i::Counters::contexts_created_from_scratch.Increment();
   }
-
-  // Add this context to the weak list of global contexts.
-  (*global_context_)->set(Context::NEXT_CONTEXT_LINK,
-                          Heap::global_contexts_list());
-  Heap::set_global_contexts_list(*global_context_);
 
   result_ = global_context_;
 }
